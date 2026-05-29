@@ -78,7 +78,12 @@ Create a zip of the folder contents (not the parent folder):
 
 ```bash
 cd /Users/admin/repos/AIUpDown
-zip -r ../AIUpDown.zip . -x '*.git*' 'CLAUDE.md'
+zip ../AIUpDown.zip \
+  manifest.json \
+  content.js \
+  icons/icon16.png \
+  icons/icon48.png \
+  icons/icon128.png
 ```
 
 Then upload `AIUpDown.zip` in the Chrome Web Store Developer Dashboard.
