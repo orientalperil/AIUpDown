@@ -122,34 +122,72 @@
     return scrollTop + el.getBoundingClientRect().top - containerTop - OFFSET;
   }
 
+  // Each call supersedes the previous one, so rapid presses don't leave two
+  // correction loops fighting over the scroll position.
+  let scrollToken = 0;
+
   function scrollToPrompt(el) {
     const scroller = getScroller();
     const getPos = () => scroller === window ? window.scrollY : scroller.scrollTop;
-
-    scroller.scrollTo({ top: scrollTargetTop(el), behavior: 'smooth' });
-
-    // Wait until the smooth scroll settles (position stops changing), THEN check
-    // for a large drift caused by lazy-loaded content shifting the layout. We
-    // don't touch the scroll while it's still animating, so it stays smooth.
-    let last = null, stable = 0, ticks = 0;
-    const watch = () => {
-      const pos = getPos();
-      if (last !== null && Math.abs(pos - last) < 1.5) stable++;
-      else stable = 0;
-      last = pos;
-
-      // Considered settled after a few stable frames, or give up after ~1.5s.
-      if (stable >= 3 || ++ticks > 30) {
-        const want = scrollTargetTop(el);
-        // Only correct meaningful drift (lazy-load), not sub-pixel rounding.
-        if (Math.abs(want - getPos()) > 24) {
-          scroller.scrollTo({ top: want, behavior: 'smooth' });
-        }
-        return;
-      }
-      requestAnimationFrame(watch);
+    const maxTop = () => {
+      const sh = scroller === window
+        ? document.documentElement.scrollHeight : scroller.scrollHeight;
+      const ch = scroller === window ? window.innerHeight : scroller.clientHeight;
+      return Math.max(0, sh - ch);
     };
-    requestAnimationFrame(watch);
+
+    const token = ++scrollToken;
+    scroller.scrollTo({ top: Math.min(scrollTargetTop(el), maxTop()), behavior: 'smooth' });
+
+    // Lazy-loaded content (images, streaming turns) shifts the layout in
+    // *stages*, not all at once, so a single post-scroll correction isn't
+    // enough. Instead we converge: keep re-pinning the target to its intended
+    // offset until it has stayed put for a sustained window, with a hard cap.
+    //
+    // - We let the initial smooth animation run briefly, then read where the
+    //   target actually landed and re-pin if it drifted (clamped to the
+    //   scrollable range, so a target near the bottom doesn't read as "off").
+    // - Corrections use instant ('auto') jumps once the first animation is
+    //   done, so we don't keep restarting a slow animation that goes stale.
+    // - "Settled" means the residual error stayed within tolerance for
+    //   ~12 consecutive frames; otherwise we keep correcting up to ~4s.
+    const TOL = 6;            // px we consider "on target"
+    const SETTLE_FRAMES = 12; // consecutive good frames before we stop
+    const MAX_MS = 4000;      // hard ceiling so we never loop forever
+    const start = performance.now();
+    let good = 0;
+    let animating = true;
+    // Let the smooth scroll get going before we start instant re-pins.
+    setTimeout(() => { animating = false; }, 320);
+
+    const tick = () => {
+      if (token !== scrollToken) return;            // a newer jump took over
+      if (!el.isConnected) return;                  // target was removed
+
+      const want = Math.min(scrollTargetTop(el), maxTop());
+      const err = want - getPos();
+
+      if (Math.abs(err) <= TOL) {
+        good++;
+        if (good >= SETTLE_FRAMES || performance.now() - start > MAX_MS) return;
+      } else {
+        good = 0;
+        if (animating) {
+          // Don't fight the in-flight smooth animation for small drifts; only
+          // re-aim it if the layout shoved the target a long way.
+          if (Math.abs(err) > 80) {
+            scroller.scrollTo({ top: want, behavior: 'smooth' });
+          }
+        } else {
+          // Instant correction — converges immediately, then we re-check.
+          scroller.scrollTo({ top: want, behavior: 'auto' });
+        }
+      }
+
+      if (performance.now() - start > MAX_MS) return;
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
 
     const prev = el.style.transition;
     el.style.transition = 'outline 0.1s';
@@ -200,7 +238,8 @@
     clearTimeout(lockTimer);
     // Hold the manual selection until the smooth scroll has settled, so the
     // observer doesn't re-highlight based on the page's mid-scroll position.
-    lockTimer = setTimeout(() => { lockedIndex = -1; }, 1200);
+    // Matches the convergence window in scrollToPrompt (~4s cap).
+    lockTimer = setTimeout(() => { lockedIndex = -1; }, 4200);
   }
 
   function jumpTo(index) {
