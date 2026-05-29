@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "AIUpDown",
+  "version": "1.6",
+  "description": "Option+Up / Option+Down to jump between your prompts on Claude, Grok, and ChatGPT, plus a floating prompt menu with up/down buttons.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://claude.ai/*",
+        "https://grok.com/*",
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
