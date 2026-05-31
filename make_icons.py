@@ -6,7 +6,7 @@ Usage:
     python3 make_icons.py
 
 Produces icons/icon16.png, icons/icon48.png, icons/icon128.png:
-an indigo (#6366f1) rounded square with stacked up/down chevrons in white.
+a red (#ef4444) rounded square with left/right chevrons (< >) in white.
 This avoids shipping binary files through text-only channels.
 """
 import os
@@ -20,14 +20,17 @@ def make(size):
     S = size * SS
     img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    # rounded-rect indigo background
+    # rounded-rect red background
     r = int(S * 28 / 128)
-    d.rounded_rectangle([0, 0, S - 1, S - 1], radius=r, fill=(99, 102, 241, 255))
-    # two white chevrons (up over down); coords scaled from a 128 grid
+    d.rounded_rectangle([0, 0, S - 1, S - 1], radius=r, fill=(239, 68, 68, 255))
+    # two white chevrons pointing left and right; coords scaled from a 128 grid
+    # (this is the up/down pair rotated 90 degrees about the center).
     def sc(pts):
         return [(x / 128 * S, y / 128 * S) for x, y in pts]
     w = max(2, int(S * 9 / 128))
-    for pts in ([(44, 52), (64, 32), (84, 52)], [(44, 76), (64, 96), (84, 76)]):
+    left = [(52, 44), (32, 64), (52, 84)]   # "<"  apex at left
+    right = [(76, 44), (96, 64), (76, 84)]  # ">"  apex at right
+    for pts in (left, right):
         d.line(sc(pts), fill=(255, 255, 255, 255), width=w, joint="curve")
         for x, y in sc(pts):  # round the caps/joints
             d.ellipse([x - w / 2, y - w / 2, x + w / 2, y + w / 2],
