@@ -264,7 +264,7 @@
 
     const prev = el.style.transition;
     el.style.transition = 'outline 0.1s';
-    el.style.outline = '2px solid rgba(99,102,241,0.5)';
+    el.style.outline = '2px solid rgba(239,68,68,0.5)';
     el.style.borderRadius = '6px';
     setTimeout(() => {
       el.style.outline = '';
