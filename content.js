@@ -30,8 +30,28 @@
     return t || '(empty)';
   }
 
-  function promptKeyOf(el) {
-    return (el.getAttribute('data-testid') || '') + '|' + promptText(el).slice(0, 200);
+  // data-testid isn't actually unique per message (it's the same generic
+  // value on every user turn), so two prompts with identical text (e.g. two
+  // "yes" replies) would otherwise derive the exact same key and collide —
+  // collapsing into one masterOrder entry, both list rows highlighting
+  // together, and clicking either jumping to whichever matches first. To
+  // disambiguate, keys are always derived for a whole mounted array at once,
+  // appending an occurrence suffix (#1, #2, ...) based on position among
+  // same-text prompts within that array — which is real, reliable DOM order
+  // for elements that are simultaneously mounted.
+  function keysFor(els) {
+    const seen = new Map(); // base key -> how many times seen so far
+    return els.map((el) => {
+      const base = (el.getAttribute('data-testid') || '') + '|' + promptText(el).slice(0, 200);
+      const n = seen.get(base) || 0;
+      seen.set(base, n + 1);
+      return n === 0 ? base : base + '#' + n;
+    });
+  }
+
+  function findByKey(els, key) {
+    const idx = keysFor(els).indexOf(key);
+    return idx >= 0 ? els[idx] : null;
   }
 
   let masterOrder = [];          // stable keys, in conversation order
@@ -40,7 +60,7 @@
 
   function syncMasterOrder(mountedEls) {
     if (!mountedEls.length) return;
-    const curKeys = mountedEls.map(promptKeyOf);
+    const curKeys = keysFor(mountedEls);
     mountedEls.forEach((el, i) => {
       if (!masterText.has(curKeys[i])) masterText.set(curKeys[i], promptText(el));
     });
@@ -228,7 +248,7 @@
     } else {
       const current = getCurrentIndex(prompts);
       const currentEl = prompts[current];
-      const currentMasterIdx = masterPos.get(promptKeyOf(currentEl));
+      const currentMasterIdx = masterPos.get(keysFor(prompts)[current]);
       if (direction === 'down') {
         targetMasterIdx = Math.min(masterOrder.length - 1, currentMasterIdx + 1);
       } else {
@@ -278,7 +298,7 @@
   // overshoot the other way, so it never converges. Stepping by roughly a
   // viewport at a time mimics scrolling by hand, which does work.
   async function revealKey(key) {
-    let el = getPrompts().find((e) => promptKeyOf(e) === key);
+    let el = findByKey(getPrompts(), key);
     if (el) return el;
     const targetIdx = masterPos.get(key);
     if (targetIdx === undefined) return null;
@@ -302,7 +322,7 @@
         // would wrongly conclude an unmounted prompt in that gap is
         // "already within range" and do nothing.
         const curIdx = getCurrentIndex(mounted);
-        const curMasterIdx = masterPos.get(promptKeyOf(mounted[curIdx]));
+        const curMasterIdx = masterPos.get(keysFor(mounted)[curIdx]);
         if (targetIdx < curMasterIdx) {
           scroller.scrollTo({ top: Math.max(0, getPos() - step), behavior: 'auto' });
         } else if (targetIdx > curMasterIdx) {
@@ -310,7 +330,7 @@
         }
       }
       await delay(180);
-      el = getPrompts().find((e) => promptKeyOf(e) === key);
+      el = findByKey(getPrompts(), key);
     }
     return el || null;
   }
@@ -544,8 +564,9 @@
     }
     lastMasterCount = masterOrder.length;
     count.textContent = masterOrder.length;
-    const currentKey = mounted.length ? promptKeyOf(mounted[getCurrentIndex(mounted)]) : null;
-    const mountedKeys = new Set(mounted.map(promptKeyOf));
+    const mountedKeyList = keysFor(mounted);
+    const currentKey = mounted.length ? mountedKeyList[getCurrentIndex(mounted)] : null;
+    const mountedKeys = new Set(mountedKeyList);
     list.innerHTML = '';
     masterOrder.forEach((key, i) => {
       const text = masterText.get(key) || '(unknown)';
@@ -575,10 +596,11 @@
   // Update only the highlight + mounted markers, leaving DOM (and scroll
   // position) untouched.
   function updateActive(mountedPrompts) {
+    const mountedKeyList = keysFor(mountedPrompts);
     const currentKey = lockedKey
       ? lockedKey
-      : (mountedPrompts.length ? promptKeyOf(mountedPrompts[getCurrentIndex(mountedPrompts)]) : null);
-    const mountedKeys = new Set(mountedPrompts.map(promptKeyOf));
+      : (mountedPrompts.length ? mountedKeyList[getCurrentIndex(mountedPrompts)] : null);
+    const mountedKeys = new Set(mountedKeyList);
     let changed = false;
     list.querySelectorAll('.cnav-item').forEach((el, i) => {
       const key = masterOrder[i];
