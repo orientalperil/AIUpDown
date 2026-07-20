@@ -79,9 +79,82 @@
   }
 
   function getPrompts() {
-    if (IS_GROK) return getPromptsGrok();
-    if (IS_CHATGPT) return getPromptsChatGPT();
-    return getPromptsClaude(); // default + Claude
+    const prompts = IS_GROK ? getPromptsGrok()
+      : IS_CHATGPT ? getPromptsChatGPT()
+      : getPromptsClaude(); // default + Claude
+    syncMasterOrder(prompts);
+    return prompts;
+  }
+
+  // ── Persistent prompt history ──────────────────────────────────────────────
+  // Claude virtualizes its message list: turns far from the viewport get
+  // unmounted, so a raw DOM query only ever reflects whatever's mounted
+  // *right now* — scrolling can make that set shrink, grow, or shift under
+  // us, which is why counts like "3/8" would jump to "2/7". We keep a
+  // running, ordered record of every prompt we've ever seen, keyed by
+  // something stable across remounts (not element identity — virtualization
+  // recreates the DOM node when an item scrolls back into view), so the
+  // panel list and prompt counts only ever grow and never reorder.
+  function promptText(el) {
+    const t = (el.innerText || el.textContent || '').trim().replace(/\s+/g, ' ');
+    return t || '(empty)';
+  }
+
+  function promptKeyOf(el) {
+    return (el.getAttribute('data-testid') || '') + '|' + promptText(el).slice(0, 200);
+  }
+
+  let masterOrder = [];          // stable keys, in conversation order
+  let masterPos = new Map();     // key -> index in masterOrder
+  const masterText = new Map();  // key -> display text
+
+  function syncMasterOrder(mountedEls) {
+    if (!mountedEls.length) return;
+    const curKeys = mountedEls.map(promptKeyOf);
+    mountedEls.forEach((el, i) => {
+      if (!masterText.has(curKeys[i])) masterText.set(curKeys[i], promptText(el));
+    });
+
+    if (!masterOrder.length) {
+      masterOrder = curKeys.slice();
+    } else {
+      // Fast scrolling can produce a transiently inconsistent mounted
+      // snapshot (e.g. a batch still mid-render), where keys we already
+      // know about appear out of their recorded order. Merging that would
+      // corrupt masterOrder permanently, so bail on this snapshot — a later,
+      // more settled one will pick up the slack instead.
+      let lastAnchor = -1;
+      for (const k of curKeys) {
+        const pos = masterPos.get(k);
+        if (pos === undefined) continue;
+        if (pos < lastAnchor) return;
+        lastAnchor = pos;
+      }
+
+      // Merge the currently-mounted run into the master order: keys we've
+      // already placed act as anchors, and any new keys found between (or
+      // before/after) anchors get spliced in relative to them, using the
+      // mounted DOM order — which is locally correct even though it's not
+      // the full picture — as the guide.
+      const insertions = [];
+      let pending = [];
+      let anchor = -1;
+      for (const k of curKeys) {
+        if (masterPos.has(k)) {
+          if (pending.length) { insertions.push({ after: anchor, keys: pending }); pending = []; }
+          anchor = masterPos.get(k);
+        } else {
+          pending.push(k);
+        }
+      }
+      if (pending.length) insertions.push({ after: anchor, keys: pending });
+
+      insertions.sort((a, b) => b.after - a.after);
+      for (const { after, keys } of insertions) {
+        masterOrder.splice(after + 1, 0, ...keys);
+      }
+    }
+    masterPos = new Map(masterOrder.map((k, i) => [k, i]));
   }
 
   function getScroller() {
@@ -191,7 +264,7 @@
 
     const prev = el.style.transition;
     el.style.transition = 'outline 0.1s';
-    el.style.outline = '2px solid rgba(239,68,68,0.5)';
+    el.style.outline = '2px solid rgba(99,102,241,0.5)';
     el.style.borderRadius = '6px';
     setTimeout(() => {
       el.style.outline = '';
@@ -201,53 +274,128 @@
   }
 
   // ── Shared navigation (used by keyboard AND buttons) ──────────────────────
-  function navigate(direction) {
+  // Stepping is done in *master order* (the full, persistent conversation
+  // order), not raw mounted-array position: Claude's virtualization can
+  // leave gaps in what's mounted (e.g. a very long response can push the
+  // next prompt far enough away that it isn't mounted even though it's
+  // immediately "next"), so stepping by mounted-array index can jump clean
+  // over several prompts. revealKey() (below) brings the real target into
+  // the DOM if it isn't there yet.
+  async function navigate(direction) {
     const prompts = getPrompts();
     if (!prompts.length) return;
 
-    let target;
-    if (lockedIndex >= 0) {
-      // A jump is in flight; step relative to the locked target so rapid
-      // presses advance predictably instead of reading the mid-scroll position.
-      target = direction === 'down'
-        ? Math.min(prompts.length - 1, lockedIndex + 1)
-        : Math.max(0, lockedIndex - 1);
+    // A jump/step may still be "in flight" (within lockHighlight's window);
+    // if so, continue relative to its master position rather than re-reading
+    // the (possibly mid-scroll) current position.
+    const lockedMasterIdx = lockedKey ? masterPos.get(lockedKey) : undefined;
+
+    let targetMasterIdx;
+    if (lockedMasterIdx !== undefined) {
+      targetMasterIdx = direction === 'down'
+        ? Math.min(masterOrder.length - 1, lockedMasterIdx + 1)
+        : Math.max(0, lockedMasterIdx - 1);
     } else {
       const current = getCurrentIndex(prompts);
-      const currentTop = prompts[current].getBoundingClientRect().top;
-      const anchorY = anchorLine();
+      const currentEl = prompts[current];
+      const currentMasterIdx = masterPos.get(promptKeyOf(currentEl));
       if (direction === 'down') {
-        target = Math.min(prompts.length - 1, current + 1);
+        targetMasterIdx = Math.min(masterOrder.length - 1, currentMasterIdx + 1);
       } else {
+        const currentTop = currentEl.getBoundingClientRect().top;
+        const anchorY = anchorLine();
         const parked = Math.abs(currentTop - anchorY) <= OFFSET + EPS;
-        target = parked ? Math.max(0, current - 1) : current;
+        targetMasterIdx = parked ? Math.max(0, currentMasterIdx - 1) : currentMasterIdx;
       }
     }
 
-    lockHighlight(target);
-    scrollToPrompt(prompts[target]);
-    showHud(direction === 'up' ? '\u2191' : '\u2193', target + 1, prompts.length);
-    if (panel.classList.contains('open')) { updateActive(prompts); scrollActiveIntoView(); }
-    return target;
+    const targetKey = masterOrder[targetMasterIdx];
+    if (targetKey === undefined) return;
+
+    const el = await revealKey(targetKey);
+    if (!el) return;
+
+    lockHighlight(targetKey);
+    scrollToPrompt(el);
+    showHud(direction === 'up' ? '\u2191' : '\u2193', targetMasterIdx + 1, masterOrder.length);
+    updateActive(getPrompts());
+    scrollActiveIntoView();
+    return targetMasterIdx;
   }
 
-  let lockedIndex = -1;
+  let lockedKey = null;
   let lockTimer = null;
-  function lockHighlight(index) {
-    lockedIndex = index;
+  function lockHighlight(key) {
+    lockedKey = key;
     clearTimeout(lockTimer);
     // Hold the manual selection until the smooth scroll has settled, so the
     // observer doesn't re-highlight based on the page's mid-scroll position.
     // Matches the convergence window in scrollToPrompt (~4s cap).
-    lockTimer = setTimeout(() => { lockedIndex = -1; }, 4200);
+    lockTimer = setTimeout(() => { lockedKey = null; }, 4200);
   }
 
-  function jumpTo(index) {
+  function delay(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+  // Bring a prompt we've recorded but that isn't currently mounted back into
+  // the DOM by nudging the scroller toward it, one viewport-ish step at a
+  // time, until Claude mounts it or we give up.
+  //
+  // Jumping straight to the extreme (top:0 / max scroll) badly overshoots
+  // when there's a lot of content between here and the target — e.g. one
+  // very long response can put thousands of pixels between two prompts —
+  // and virtualization only mounts what's near the *current* viewport. An
+  // overshoot lands us far past the target with no way back except another
+  // overshoot the other way, so it never converges. Stepping by roughly a
+  // viewport at a time mimics scrolling by hand, which does work.
+  async function revealKey(key) {
+    let el = getPrompts().find((e) => promptKeyOf(e) === key);
+    if (el) return el;
+    const targetIdx = masterPos.get(key);
+    if (targetIdx === undefined) return null;
+
+    const scroller = getScroller();
+    const getPos = () => scroller === window ? window.scrollY : scroller.scrollTop;
+    const getMax = () => {
+      const sh = scroller === window ? document.documentElement.scrollHeight : scroller.scrollHeight;
+      const ch = scroller === window ? window.innerHeight : scroller.clientHeight;
+      return Math.max(0, sh - ch);
+    };
+    const step = (scroller === window ? window.innerHeight : scroller.clientHeight) * 0.85;
+
+    for (let i = 0; i < 60 && !el; i++) {
+      const mounted = getPrompts();
+      if (mounted.length) {
+        // Compare against whichever mounted prompt is currently at the
+        // anchor line, not the mounted array's first/last extremes. A long
+        // response can leave a *gap* in what's mounted (e.g. prompt 1 and
+        // prompt 17 mounted, nothing in between) — checking the extremes
+        // would wrongly conclude an unmounted prompt in that gap is
+        // "already within range" and do nothing.
+        const curIdx = getCurrentIndex(mounted);
+        const curMasterIdx = masterPos.get(promptKeyOf(mounted[curIdx]));
+        if (targetIdx < curMasterIdx) {
+          scroller.scrollTo({ top: Math.max(0, getPos() - step), behavior: 'auto' });
+        } else if (targetIdx > curMasterIdx) {
+          scroller.scrollTo({ top: Math.min(getMax(), getPos() + step), behavior: 'auto' });
+        }
+      }
+      await delay(180);
+      el = getPrompts().find((e) => promptKeyOf(e) === key);
+    }
+    return el || null;
+  }
+
+  async function jumpToKey(key) {
+    const el = await revealKey(key);
+    if (!el) return;
     const prompts = getPrompts();
-    if (!prompts[index]) return;
-    lockHighlight(index);
-    scrollToPrompt(prompts[index]);
-    showHud('\u2192', index + 1, prompts.length);
+    const idx = prompts.indexOf(el);
+    if (idx < 0) return;
+    lockHighlight(key);
+    scrollToPrompt(el);
+    const masterIdx = masterPos.get(key);
+    showHud('\u2192', masterIdx !== undefined ? masterIdx + 1 : idx + 1, masterOrder.length || prompts.length);
+    updateActive(prompts);
   }
 
   // ── Keyboard ──────────────────────────────────────────────────────────────
@@ -345,6 +493,10 @@
     }
     .cnav-item:hover { background: var(--cnav-accent-soft); color: var(--cnav-text-strong); }
     .cnav-item.active { background: var(--cnav-accent-mid); color: var(--cnav-text-strong); }
+    /* Marks rows whose prompt is currently mounted in the host page's DOM,
+       since Claude's virtualization means that's a shifting subset of the
+       full list. */
+    .cnav-item.cnav-mounted { outline: 1.5px solid var(--cnav-accent); outline-offset: -2px; }
     .cnav-num {
       color: var(--cnav-muted); font-size: 11px; font-variant-numeric: tabular-nums;
       flex-shrink: 0; min-width: 18px;
@@ -384,7 +536,6 @@
     .cnav-btn:hover { background: var(--cnav-accent-mid); color: var(--cnav-text-strong); }
     .cnav-btn:active { transform: scale(0.9); }
     .cnav-btn svg { width: 20px; height: 20px; }
-    #cnav-toggle.open { background: var(--cnav-accent-mid); color: var(--cnav-text-strong); }
     #cnav-hud {
       position: fixed; bottom: 80px; right: 84px;
       background: var(--cnav-bg); color: var(--cnav-accent);
@@ -401,7 +552,6 @@
   const ICONS = {
     up:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg>',
     down: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>',
-    list: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="20" y2="12"/><line x1="8" y1="18" x2="20" y2="18"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/></svg>',
     sun:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
     moon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>'
   };
@@ -409,7 +559,7 @@
   const root = document.createElement('div');
   root.id = 'cnav-root';
   root.innerHTML = `
-    <div id="cnav-panel">
+    <div id="cnav-panel" class="open">
       <div id="cnav-head">
         <span id="cnav-head-left"><span>Prompts</span><span id="cnav-count">0</span></span>
         <button id="cnav-theme" title="Toggle light/dark"></button>
@@ -419,7 +569,6 @@
     <div id="cnav-controls">
       <button class="cnav-btn" id="cnav-up" data-tip="Previous  \u2325\u2191">${ICONS.up}</button>
       <button class="cnav-btn" id="cnav-down" data-tip="Next  \u2325\u2193">${ICONS.down}</button>
-      <button class="cnav-btn" id="cnav-toggle" title="Prompt menu">${ICONS.list}</button>
     </div>
     <div id="cnav-hud"></div>
   `;
@@ -428,7 +577,6 @@
   const panel  = root.querySelector('#cnav-panel');
   const list   = root.querySelector('#cnav-list');
   const count  = root.querySelector('#cnav-count');
-  const toggle = root.querySelector('#cnav-toggle');
   const hud    = root.querySelector('#cnav-hud');
   const themeBtn = root.querySelector('#cnav-theme');
 
@@ -451,48 +599,37 @@
 
   root.querySelector('#cnav-up').addEventListener('click', () => navigate('up'));
   root.querySelector('#cnav-down').addEventListener('click', () => navigate('down'));
-  toggle.addEventListener('click', () => {
-    const open = panel.classList.toggle('open');
-    toggle.classList.toggle('open', open);
-    if (open) buildList(true);
-  });
 
-  // Close panel when clicking outside it
-  document.addEventListener('click', (e) => {
-    if (!root.contains(e.target) && panel.classList.contains('open')) {
-      panel.classList.remove('open');
-      toggle.classList.remove('open');
-    }
-  });
-
-  function promptText(el) {
-    const t = (el.innerText || el.textContent || '').trim().replace(/\s+/g, ' ');
-    return t || '(empty)';
-  }
-
-  let lastCount = -1;
+  // The list renders from the persistent masterOrder (not the raw, currently-
+  // mounted prompts) so items already discovered never disappear or reorder
+  // as Claude's virtualization mounts/unmounts turns underneath us.
+  let lastMasterCount = -1;
   function buildList(force) {
-    const prompts = getPrompts();
+    const mounted = getPrompts(); // also refreshes masterOrder as a side effect
     // Skip a full rebuild if nothing structural changed — avoids clobbering the
     // list (and its scroll position) while the user is browsing it.
-    if (!force && prompts.length === lastCount && list.children.length === prompts.length) {
-      updateActive(prompts);
+    if (!force && masterOrder.length === lastMasterCount && list.children.length === masterOrder.length) {
+      updateActive(mounted);
       return;
     }
-    lastCount = prompts.length;
-    count.textContent = prompts.length;
-    const current = prompts.length ? getCurrentIndex(prompts) : -1;
+    lastMasterCount = masterOrder.length;
+    count.textContent = masterOrder.length;
+    const currentKey = mounted.length ? promptKeyOf(mounted[getCurrentIndex(mounted)]) : null;
+    const mountedKeys = new Set(mounted.map(promptKeyOf));
     list.innerHTML = '';
-    prompts.forEach((p, i) => {
+    masterOrder.forEach((key, i) => {
+      const text = masterText.get(key) || '(unknown)';
       const item = document.createElement('div');
-      item.className = 'cnav-item' + (i === current ? ' active' : '');
+      item.className = 'cnav-item'
+        + (key === currentKey ? ' active' : '')
+        + (mountedKeys.has(key) ? ' cnav-mounted' : '');
       item.innerHTML = `<span class="cnav-num">${i + 1}</span><span class="cnav-txt"></span>`;
-      item.querySelector('.cnav-txt').textContent = promptText(p);
-      item.title = promptText(p);
+      item.querySelector('.cnav-txt').textContent = text;
+      item.title = text;
       item.addEventListener('click', () => {
-        jumpTo(i);
         list.querySelectorAll('.cnav-item').forEach(x => x.classList.remove('active'));
         item.classList.add('active');
+        jumpToKey(key);
       });
       list.appendChild(item);
     });
@@ -505,16 +642,20 @@
     if (active) active.scrollIntoView({ block: 'nearest' });
   }
 
-  // Update only the highlight, leaving DOM (and scroll position) untouched.
-  function updateActive(prompts) {
-    const current = lockedIndex >= 0
-      ? lockedIndex
-      : (prompts.length ? getCurrentIndex(prompts) : -1);
+  // Update only the highlight + mounted markers, leaving DOM (and scroll
+  // position) untouched.
+  function updateActive(mountedPrompts) {
+    const currentKey = lockedKey
+      ? lockedKey
+      : (mountedPrompts.length ? promptKeyOf(mountedPrompts[getCurrentIndex(mountedPrompts)]) : null);
+    const mountedKeys = new Set(mountedPrompts.map(promptKeyOf));
     let changed = false;
     list.querySelectorAll('.cnav-item').forEach((el, i) => {
-      const on = i === current;
+      const key = masterOrder[i];
+      const on = key === currentKey;
       if (on && !el.classList.contains('active')) changed = true;
       el.classList.toggle('active', on);
+      el.classList.toggle('cnav-mounted', mountedKeys.has(key));
     });
     // Follow the highlight, but don't yank the menu while the user browses it.
     if (changed && !panelBusy) scrollActiveIntoView();
@@ -524,22 +665,38 @@
   // out from under them.
   let panelBusy = false;
   list.addEventListener('mouseenter', () => { panelBusy = true; });
-  list.addEventListener('mouseleave', () => { panelBusy = false; });
+  list.addEventListener('mouseleave', () => { panelBusy = false; buildList(); });
   list.addEventListener('scroll', () => {
     panelBusy = true;
     clearTimeout(list._idle);
-    list._idle = setTimeout(() => { panelBusy = false; }, 600);
+    list._idle = setTimeout(() => { panelBusy = false; buildList(); }, 600);
   });
 
   // Keep the list fresh, but only on real structural changes and never mid-interaction.
+  let refreshTimer = null;
+  function scheduleRefresh(delay) {
+    clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(() => { if (!panelBusy) buildList(); }, delay);
+  }
+
   const mo = new MutationObserver(() => {
-    if (!panel.classList.contains('open') || panelBusy) return;
-    clearTimeout(mo._t);
-    mo._t = setTimeout(() => {
-      if (!panelBusy) buildList();
-    }, 400);
+    if (panelBusy) return;
+    scheduleRefresh(400);
   });
   mo.observe(document.body, { childList: true, subtree: true });
+
+  // Claude's chat pane mounts older history as you scroll it toward the top,
+  // which is itself a DOM mutation the observer above should catch — but
+  // scroll events on that internal container don't bubble, so listening in
+  // the capture phase here is what actually catches "the user just scrolled"
+  // as a second, more immediate trigger to refresh the list.
+  document.addEventListener('scroll', () => scheduleRefresh(300), true);
+
+  // Safety net: if a refresh got dropped (e.g. mutations kept panelBusy true
+  // the whole time), this guarantees the list eventually catches up.
+  setInterval(() => { if (!panelBusy) buildList(); }, 1500);
+
+  buildList(true);
 
   // ── HUD ─────────────────────────────────────────────────────────────────
   let hudTimer;
