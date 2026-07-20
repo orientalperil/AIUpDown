@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AIUpDown",
-  "version": "1.6",
+  "version": "1.7",
   "description": "Option+Up / Option+Down to jump between your prompts on Claude, plus a floating prompt menu with up/down buttons.",
   "icons": {
     "16": "icons/icon16.png",
