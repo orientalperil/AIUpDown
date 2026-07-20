@@ -30,18 +30,29 @@
     return t || '(empty)';
   }
 
-  // data-testid isn't actually unique per message (it's the same generic
-  // value on every user turn), so two prompts with identical text (e.g. two
-  // "yes" replies) would otherwise derive the exact same key and collide —
-  // collapsing into one masterOrder entry, both list rows highlighting
-  // together, and clicking either jumping to whichever matches first. To
-  // disambiguate, keys are always derived for a whole mounted array at once,
-  // appending an occurrence suffix (#1, #2, ...) based on position among
-  // same-text prompts within that array — which is real, reliable DOM order
-  // for elements that are simultaneously mounted.
+  // Each message (prompt or response) is wrapped in a
+  // <div role="article" aria-posinset="N" aria-label="Message N of M">.
+  // aria-posinset is Claude's own true, stable ordering index — unique per
+  // message and unaffected by mount/unmount or how fast we scroll — so it's
+  // a far better identity/order source than anything we can derive from
+  // text or data-testid (which turned out not to be unique per message).
+  function posinsetOf(el) {
+    const article = el.closest('[role="article"]');
+    const raw = article && article.getAttribute('aria-posinset');
+    const n = raw != null ? parseInt(raw, 10) : NaN;
+    return Number.isNaN(n) ? null : n;
+  }
+
+  // Falls back to a text-based key, with in-array occurrence disambiguation
+  // for identical text (e.g. two "yes" replies), only for prompts where the
+  // aria-posinset wrapper isn't found — e.g. the legacy fallback selector
+  // above matched instead of the primary one.
+  let nextFallbackOrder = 0;
   function keysFor(els) {
     const seen = new Map(); // base key -> how many times seen so far
     return els.map((el) => {
+      const pos = posinsetOf(el);
+      if (pos !== null) return 'p' + pos;
       const base = (el.getAttribute('data-testid') || '') + '|' + promptText(el).slice(0, 200);
       const n = seen.get(base) || 0;
       seen.set(base, n + 1);
@@ -54,57 +65,38 @@
     return idx >= 0 ? els[idx] : null;
   }
 
-  let masterOrder = [];          // stable keys, in conversation order
-  let masterPos = new Map();     // key -> index in masterOrder
-  const masterText = new Map();  // key -> display text
+  let masterOrder = [];            // keys, always kept in true conversation order
+  let masterPos = new Map();       // key -> index in masterOrder
+  const masterText = new Map();    // key -> display text
+  const masterSortVal = new Map(); // key -> numeric sort value (posinset, or a fallback ordinal)
 
   function syncMasterOrder(mountedEls) {
     if (!mountedEls.length) return;
     const curKeys = keysFor(mountedEls);
+    let changed = false;
+
     mountedEls.forEach((el, i) => {
-      if (!masterText.has(curKeys[i])) masterText.set(curKeys[i], promptText(el));
+      const key = curKeys[i];
+      if (!masterText.has(key)) {
+        masterText.set(key, promptText(el));
+        const pos = posinsetOf(el);
+        // Fallback keys (no aria-posinset) sort after all real ones, in the
+        // order we happened to discover them — a reasonable degrade for a
+        // path that should rarely trigger.
+        masterSortVal.set(key, pos !== null ? pos : 1e9 + nextFallbackOrder++);
+        masterOrder.push(key);
+        changed = true;
+      }
     });
 
-    if (!masterOrder.length) {
-      masterOrder = curKeys.slice();
-    } else {
-      // Fast scrolling can produce a transiently inconsistent mounted
-      // snapshot (e.g. a batch still mid-render), where keys we already
-      // know about appear out of their recorded order. Merging that would
-      // corrupt masterOrder permanently, so bail on this snapshot — a later,
-      // more settled one will pick up the slack instead.
-      let lastAnchor = -1;
-      for (const k of curKeys) {
-        const pos = masterPos.get(k);
-        if (pos === undefined) continue;
-        if (pos < lastAnchor) return;
-        lastAnchor = pos;
-      }
-
-      // Merge the currently-mounted run into the master order: keys we've
-      // already placed act as anchors, and any new keys found between (or
-      // before/after) anchors get spliced in relative to them, using the
-      // mounted DOM order — which is locally correct even though it's not
-      // the full picture — as the guide.
-      const insertions = [];
-      let pending = [];
-      let anchor = -1;
-      for (const k of curKeys) {
-        if (masterPos.has(k)) {
-          if (pending.length) { insertions.push({ after: anchor, keys: pending }); pending = []; }
-          anchor = masterPos.get(k);
-        } else {
-          pending.push(k);
-        }
-      }
-      if (pending.length) insertions.push({ after: anchor, keys: pending });
-
-      insertions.sort((a, b) => b.after - a.after);
-      for (const { after, keys } of insertions) {
-        masterOrder.splice(after + 1, 0, ...keys);
-      }
+    // Re-sorting by the true posinset value (rather than trying to splice
+    // new keys into the right spot via DOM-order heuristics) means
+    // discovery order — even a jumbled one from fast scrolling — can never
+    // corrupt the final order.
+    if (changed) {
+      masterOrder.sort((a, b) => masterSortVal.get(a) - masterSortVal.get(b));
+      masterPos = new Map(masterOrder.map((k, i) => [k, i]));
     }
-    masterPos = new Map(masterOrder.map((k, i) => [k, i]));
   }
 
   function getScroller() {
