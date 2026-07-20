@@ -303,6 +303,7 @@
     const targetIdx = masterPos.get(key);
     if (targetIdx === undefined) return null;
 
+    showLoadingHud();
     const scroller = getScroller();
     const getPos = () => scroller === window ? window.scrollY : scroller.scrollTop;
     const getMax = () => {
@@ -332,6 +333,7 @@
       await delay(180);
       el = findByKey(getPrompts(), key);
     }
+    if (!el) hideLoadingHud();
     return el || null;
   }
 
@@ -495,6 +497,8 @@
       pointer-events: none; opacity: 0; transition: opacity 0.3s;
       z-index: 99999; letter-spacing: 0.04em;
     }
+    @keyframes cnav-pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
+    #cnav-hud.cnav-hud-loading { animation: cnav-pulse 0.9s ease-in-out infinite; }
   `;
   document.head.appendChild(style);
 
@@ -653,10 +657,27 @@
   // ── HUD ─────────────────────────────────────────────────────────────────
   let hudTimer;
   function showHud(dir, n, total) {
+    hud.classList.remove('cnav-hud-loading');
     hud.textContent = `${dir}  prompt ${n} / ${total}`;
     hud.style.opacity = '1';
     clearTimeout(hudTimer);
     hudTimer = setTimeout(() => { hud.style.opacity = '0'; }, 1200);
+  }
+
+  // Shown while revealKey() is scrolling/waiting for an unmounted prompt —
+  // no auto-fade, since we don't know how long that'll take; showHud() above
+  // clears the pulse and resumes normal fade-out on success. On failure
+  // revealKey calls hideLoadingHud() directly, since nothing else will.
+  function showLoadingHud() {
+    clearTimeout(hudTimer);
+    hud.classList.add('cnav-hud-loading');
+    hud.textContent = 'Locating…';
+    hud.style.opacity = '1';
+  }
+
+  function hideLoadingHud() {
+    hud.classList.remove('cnav-hud-loading');
+    hud.style.opacity = '0';
   }
 
 })();
