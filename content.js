@@ -5,83 +5,13 @@
   const ANCHOR = 90;     // viewport line (px from top) used to decide "current" prompt
   const EPS = 4;         // tolerance so a prompt sitting right at the anchor counts as "here"
 
-  // ── Prompt detection (host-aware) ─────────────────────────────────────────
-  const HOST = location.hostname;
-  const IS_CLAUDE = /claude\.ai$/.test(HOST);
-  const IS_GROK = /grok\.com$/.test(HOST);
-  const IS_CHATGPT = /chatgpt\.com$|chat\.openai\.com$/.test(HOST);
-
-  let _selector = null;
-
-  function tryEach(selectors) {
-    for (const sel of selectors) {
-      const found = Array.from(document.querySelectorAll(sel))
-        .filter(el => el.offsetParent !== null && (el.innerText || '').trim());
-      if (found.length) return { sel, found };
-    }
-    return null;
-  }
-
-  function getPromptsClaude() {
+  // ── Prompt detection ────────────────────────────────────────────────────────
+  function getPrompts() {
     let nodes = Array.from(document.querySelectorAll('[data-testid^="user-message"]'));
     if (!nodes.length) {
       nodes = Array.from(document.querySelectorAll('.human-turn, [class*="human"]'));
     }
-    return nodes.filter(el => el.offsetParent !== null);
-  }
-
-  function getPromptsGrok() {
-    // Confirmed: grok.com marks each user turn with data-testid="user-message"
-    // (on a parent of the text — fine, we scroll to / read from the container).
-    let nodes = Array.from(document.querySelectorAll('[data-testid="user-message"]'))
-      .filter(el => el.offsetParent !== null && (el.innerText || '').trim());
-    if (nodes.length) return nodes;
-
-    // Fallback only if Grok changes its markup: reuse a cached working selector…
-    if (_selector) {
-      const cached = Array.from(document.querySelectorAll(_selector))
-        .filter(el => el.offsetParent !== null && (el.innerText || '').trim());
-      if (cached.length) return cached;
-      _selector = null;
-    }
-    const known = tryEach([
-      '[data-testid^="user"]',
-      'div.items-end .message-bubble',
-      '[class*="user"][class*="message"]'
-    ]);
-    if (known) { _selector = known.sel; return known.found; }
-
-    // …or, last resort, infer from right-alignment.
-    const candidates = Array.from(document.querySelectorAll('main div, [role="main"] div'))
-      .filter(el => {
-        if (el.offsetParent === null) return false;
-        const txt = (el.innerText || '').trim();
-        if (!txt || txt.length > 4000) return false;
-        const cs = getComputedStyle(el);
-        return cs.alignSelf === 'flex-end' ||
-          cs.marginLeft === 'auto' ||
-          /items-end|justify-end|ml-auto|self-end/.test(el.className || '');
-      });
-    const inner = candidates.filter(el => !candidates.some(o => o !== el && el.contains(o)));
-    return inner.length ? inner : [];
-  }
-
-  function getPromptsChatGPT() {
-    let nodes = Array.from(document.querySelectorAll('[data-message-author-role="user"]'));
-    if (!nodes.length) {
-      // Fallback hooks seen across ChatGPT versions.
-      nodes = Array.from(document.querySelectorAll(
-        '[data-testid^="conversation-turn"] [data-message-author-role="user"], ' +
-        'div[class*="user"] .whitespace-pre-wrap'
-      ));
-    }
-    return nodes.filter(el => el.offsetParent !== null && (el.innerText || '').trim());
-  }
-
-  function getPrompts() {
-    const prompts = IS_GROK ? getPromptsGrok()
-      : IS_CHATGPT ? getPromptsChatGPT()
-      : getPromptsClaude(); // default + Claude
+    const prompts = nodes.filter(el => el.offsetParent !== null);
     syncMasterOrder(prompts);
     return prompts;
   }

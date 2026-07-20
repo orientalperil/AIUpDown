@@ -5,14 +5,13 @@ Guidance for AI assistants (and humans) working in this repository.
 ## What this is
 
 A **Manifest V3 Chrome extension** that adds keyboard + on-screen navigation
-between a user's own prompts in AI chat UIs (Claude, Grok, ChatGPT). It was
-converted from a Tampermonkey userscript; all behavior lives in a single
-content script.
+between a user's own prompts on claude.ai. It was converted from a
+Tampermonkey userscript; all behavior lives in a single content script.
 
 ## Architecture
 
 - **`manifest.json`** — MV3. Declares one `content_scripts` entry that injects
-  `content.js` into the four supported origins at `document_idle`. There is no
+  `content.js` into `https://claude.ai/*` at `document_idle`. There is no
   background service worker, no popup, and no `permissions` block (none are
   needed — the script only touches the page DOM and `localStorage`).
 - **`content.js`** — the whole thing: prompt detection, scroll/anchor math, the
@@ -33,17 +32,12 @@ step.** Edit `content.js` directly; reload the extension to test.
 
 ## Key design points (don't regress these)
 
-- **Host-aware prompt detection.** `getPrompts()` dispatches to per-site
-  functions. Each has a primary selector plus fallbacks because these sites
-  change their DOM frequently:
-  - Claude: `[data-testid^="user-message"]`
-  - ChatGPT: `[data-message-author-role="user"]`
-  - Grok: `[data-testid="user-message"]`, with right-alignment inference as a
-    last resort.
-  If navigation breaks on one site, the selector is almost always the cause —
-  fix it in that site's `getPrompts*` function, keep the fallbacks.
+- **Prompt detection.** `getPrompts()` uses `[data-testid^="user-message"]`
+  as the primary selector, with a `.human-turn, [class*="human"]` fallback
+  since Claude changes its DOM occasionally. If navigation breaks, the
+  selector is almost always the cause — fix it there, keep the fallback.
 - **Scroll container detection.** `getScroller()` walks up from the first
-  prompt to find the actual scrollable element (these apps don't always scroll
+  prompt to find the actual scrollable element (Claude doesn't always scroll
   `window`). Don't hard-code `window`.
 - **Smooth-scroll + drift correction.** `scrollToPrompt()` issues a smooth
   scroll, waits for it to settle, then makes a *single* correction only if
@@ -66,9 +60,6 @@ step.** Edit `content.js` directly; reload the extension to test.
 
 ## Common tasks
 
-- **Add a new supported site:** add the `https://…/*` pattern to
-  `manifest.json` → `content_scripts[0].matches`, add a host check
-  (`IS_*`) and a `getPrompts*()` function, and wire it into `getPrompts()`.
 - **Change the shortcut:** the keydown handler at the "Keyboard" section keys
   off `e.altKey` + `ArrowUp/ArrowDown`. (If you ever want a user-configurable
   shortcut via Chrome's UI, that would require a `commands` block in the
@@ -78,10 +69,7 @@ step.** Edit `content.js` directly; reload the extension to test.
 
 ## Gotchas
 
-- These chat sites are SPAs — the DOM mutates constantly. The MutationObserver
-  is intentionally debounced (400ms) and gated; don't make it eager.
-- `localStorage` is per-origin, so the theme choice is independent on each
-  site. That's expected behavior, not a bug.
+- Claude is an SPA — the DOM mutates constantly. The MutationObserver is
+  intentionally debounced (400ms) and gated; don't make it eager.
 - No `permissions` are required; if you add a feature that needs one (e.g.
-  `storage` for cross-site sync, or a background worker), update both the
-  manifest and this file.
+  a background worker), update both the manifest and this file.
