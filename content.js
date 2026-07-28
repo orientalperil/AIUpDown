@@ -480,6 +480,7 @@
     .cnav-btn:hover { background: var(--cnav-accent-mid); color: var(--cnav-text-strong); }
     .cnav-btn:active { transform: scale(0.9); }
     .cnav-btn svg { width: 20px; height: 20px; }
+    #cnav-toggle.open { background: var(--cnav-accent-mid); color: var(--cnav-text-strong); }
     #cnav-hud {
       position: fixed; bottom: 80px; right: 84px;
       background: var(--cnav-bg); color: var(--cnav-accent);
@@ -498,6 +499,7 @@
   const ICONS = {
     up:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg>',
     down: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>',
+    list: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="20" y2="12"/><line x1="8" y1="18" x2="20" y2="18"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/></svg>',
     sun:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
     moon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>'
   };
@@ -515,6 +517,7 @@
     <div id="cnav-controls">
       <button class="cnav-btn" id="cnav-up" data-tip="Previous  \u2325\u2191">${ICONS.up}</button>
       <button class="cnav-btn" id="cnav-down" data-tip="Next  \u2325\u2193">${ICONS.down}</button>
+      <button class="cnav-btn open" id="cnav-toggle" title="Prompt menu">${ICONS.list}</button>
     </div>
     <div id="cnav-hud"></div>
   `;
@@ -523,6 +526,7 @@
   const panel  = root.querySelector('#cnav-panel');
   const list   = root.querySelector('#cnav-list');
   const count  = root.querySelector('#cnav-count');
+  const toggle = root.querySelector('#cnav-toggle');
   const hud    = root.querySelector('#cnav-hud');
   const themeBtn = root.querySelector('#cnav-theme');
 
@@ -545,6 +549,11 @@
 
   root.querySelector('#cnav-up').addEventListener('click', () => navigate('up'));
   root.querySelector('#cnav-down').addEventListener('click', () => navigate('down'));
+  toggle.addEventListener('click', () => {
+    const open = panel.classList.toggle('open');
+    toggle.classList.toggle('open', open);
+    if (open) buildList(true);
+  });
 
   // The list renders from the persistent masterOrder (not the raw, currently-
   // mounted prompts) so items already discovered never disappear or reorder
