@@ -5,6 +5,19 @@
   const ANCHOR = 90;     // viewport line (px from top) used to decide "current" prompt
   const EPS = 4;         // tolerance so a prompt sitting right at the anchor counts as "here"
 
+  // ── Conversation identity ───────────────────────────────────────────────────
+  // Claude is an SPA: switching from one chat to another (via sidebar click,
+  // back/forward, etc.) never reloads this content script, so all the
+  // persistent state below (masterOrder and friends) would otherwise keep
+  // accumulating prompts from every conversation ever visited in the tab.
+  // We key off the /chat/<id> segment of the URL and wipe that state
+  // whenever it changes.
+  function conversationKeyFromUrl() {
+    const m = location.pathname.match(/\/chat\/([^/?#]+)/);
+    return m ? m[1] : location.pathname;
+  }
+  let currentConvKey = conversationKeyFromUrl();
+
   // ── Prompt detection ────────────────────────────────────────────────────────
   function getPrompts() {
     let nodes = Array.from(document.querySelectorAll('[data-testid^="user-message"]'));
@@ -555,11 +568,36 @@
     if (open) buildList(true);
   });
 
+  // Wipes all persistent per-conversation state (the master prompt order/text/
+  // sort maps, the highlight lock, any in-flight scroll loop, and the rendered
+  // list) when the URL's conversation id no longer matches the one we last
+  // saw. Called from buildList() so it rides the existing refresh cadence
+  // instead of needing its own listeners.
+  function checkConversationChange() {
+    const key = conversationKeyFromUrl();
+    if (key === currentConvKey) return false;
+    currentConvKey = key;
+    masterOrder = [];
+    masterPos = new Map();
+    masterText.clear();
+    masterSortVal.clear();
+    nextFallbackOrder = 0;
+    lockedKey = null;
+    clearTimeout(lockTimer);
+    scrollToken++;
+    lastMasterCount = -1;
+    list.innerHTML = '';
+    count.textContent = '0';
+    hideLoadingHud();
+    return true;
+  }
+
   // The list renders from the persistent masterOrder (not the raw, currently-
   // mounted prompts) so items already discovered never disappear or reorder
   // as Claude's virtualization mounts/unmounts turns underneath us.
   let lastMasterCount = -1;
   function buildList(force) {
+    if (checkConversationChange()) force = true;
     const mounted = getPrompts(); // also refreshes masterOrder as a side effect
     // Skip a full rebuild if nothing structural changed — avoids clobbering the
     // list (and its scroll position) while the user is browsing it.
