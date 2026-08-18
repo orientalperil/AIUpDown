@@ -8,6 +8,11 @@
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "725a03e6-9738-43a4-9e90-ecf639e8468c"
+    }
+  },
   "content_scripts": [
     {
       "matches": [
