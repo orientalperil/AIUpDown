@@ -1,9 +1,8 @@
 # AIUpDown
 
 A Chrome extension (Manifest V3) that lets you jump between *your own prompts*
-on Claude, Grok, and ChatGPT using **Option+Up / Option+Down**, plus a floating
-prompt menu with up/down buttons and a clickable list of every prompt in the
-conversation.
+on Claude using **Option+Up / Option+Down**, plus a floating prompt menu with
+up/down buttons and a clickable list of every prompt in the conversation.
 
 Converted from a Tampermonkey/Greasemonkey userscript (v1.6).
 
@@ -13,15 +12,6 @@ Converted from a Tampermonkey/Greasemonkey userscript (v1.6).
 - **Floating controls** (bottom-right) — up, down, and a menu toggle.
 - **Prompt menu** — a scrollable list of all your prompts; click any to jump.
 - **Light / dark theme** toggle, persisted via `localStorage`.
-- Works on `claude.ai`, `chatgpt.com`, `chat.openai.com`, and `grok.com`.
-
-## Supported sites
-
-| Site | Match pattern |
-|------|---------------|
-| Claude | `https://claude.ai/*` |
-| ChatGPT | `https://chatgpt.com/*`, `https://chat.openai.com/*` |
-| Grok | `https://grok.com/*` |
 
 ## Project structure
 
@@ -55,8 +45,7 @@ If you regenerate the icons, any 16/48/128 px PNGs with transparency will do.
 2. Toggle **Developer mode** on (top-right).
 3. Click **Load unpacked**.
 4. Select this folder: `/Users/admin/repos/AIUpDown/`.
-5. Open `https://claude.ai`, `https://chatgpt.com`, or `https://grok.com`
-   and start a conversation with at least one prompt.
+5. Open `https://claude.ai` and start a conversation with at least one prompt.
 
 After editing `content.js`, click the **reload** (↻) icon on the extension
 card in `chrome://extensions`, then refresh the chat tab.
@@ -66,8 +55,7 @@ card in `chrome://extensions`, then refresh the chat tab.
 1. Open `about:debugging#/runtime/this-firefox` in Firefox.
 2. Click **Load Temporary Add-on…**.
 3. Select `manifest.json` inside this folder: `/Users/admin/repos/AIUpDown/`.
-4. Open `https://claude.ai`, `https://chatgpt.com`, or `https://grok.com`
-   and start a conversation with at least one prompt.
+4. Open `https://claude.ai` and start a conversation with at least one prompt.
 
 Temporary add-ons are removed when Firefox closes. After editing `content.js`,
 click **Reload** next to the add-on on the `about:debugging` page, then
