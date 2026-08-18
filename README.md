@@ -1,4 +1,4 @@
-# AI Chat Arrow Key Navigation
+# AIUpDown
 
 A Chrome extension (Manifest V3) that lets you jump between *your own prompts*
 on Claude, Grok, and ChatGPT using **Option+Up / Option+Down**, plus a floating
