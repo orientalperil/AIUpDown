@@ -40,12 +40,16 @@ AIUpDown/
 ## Build
 
 There is **no build step**. This is a plain, unbundled MV3 extension —
-`content.js` is loaded directly as a content script. You only "build" if you
-want a distributable `.zip` for the Chrome Web Store (see Packaging below).
+`content.js` is loaded directly as a content script, unchanged on both
+Chrome and Firefox (it uses no `chrome.*` APIs, only DOM/`localStorage`).
+You only "build" if you want a distributable `.zip` for the Chrome Web
+Store or Firefox Add-ons (see Packaging below).
 
 If you regenerate the icons, any 16/48/128 px PNGs with transparency will do.
 
 ## Install (load unpacked, for development)
+
+### Chrome
 
 1. Open `chrome://extensions` in Chrome.
 2. Toggle **Developer mode** on (top-right).
@@ -56,6 +60,18 @@ If you regenerate the icons, any 16/48/128 px PNGs with transparency will do.
 
 After editing `content.js`, click the **reload** (↻) icon on the extension
 card in `chrome://extensions`, then refresh the chat tab.
+
+### Firefox
+
+1. Open `about:debugging#/runtime/this-firefox` in Firefox.
+2. Click **Load Temporary Add-on…**.
+3. Select `manifest.json` inside this folder: `/Users/admin/repos/AIUpDown/`.
+4. Open `https://claude.ai`, `https://chatgpt.com`, or `https://grok.com`
+   and start a conversation with at least one prompt.
+
+Temporary add-ons are removed when Firefox closes. After editing `content.js`,
+click **Reload** next to the add-on on the `about:debugging` page, then
+refresh the chat tab.
 
 ## Test
 
@@ -72,9 +88,10 @@ If nothing appears: open DevTools → Console on the chat tab and check for
 errors, and confirm the site's DOM still matches the selectors in
 `content.js` (the chat sites change markup occasionally — see CLAUDE.md).
 
-## Packaging for the Chrome Web Store (optional)
+## Packaging for the Chrome Web Store / Firefox Add-ons (optional)
 
-Create a zip of the folder contents (not the parent folder):
+Same zip works for both stores — create a zip of the folder contents (not
+the parent folder):
 
 ```bash
 cd /Users/admin/repos/AIUpDown
@@ -86,7 +103,11 @@ zip ../AIUpDown.zip \
   icons/icon128.png
 ```
 
-Then upload `AIUpDown.zip` in the Chrome Web Store Developer Dashboard.
+- **Chrome Web Store**: upload `AIUpDown.zip` in the Chrome Web Store
+  Developer Dashboard.
+- **Firefox Add-ons (AMO)**: upload `AIUpDown.zip` at
+  https://addons.mozilla.org/developers/ — requires the
+  `browser_specific_settings.gecko.id` field in `manifest.json`.
 
 ## Notes on the conversion from the userscript
 
